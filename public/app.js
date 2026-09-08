@@ -15,6 +15,8 @@ const state = {
   ws: null,
   busy: false,
   lastToken: "",
+  draft: "",
+  lightboxOpen: false,
 };
 
 function pathParts() {
@@ -62,6 +64,24 @@ function mediaUrl(key) {
   return `/api/media?key=${encodeURIComponent(key)}`;
 }
 
+function openLightbox(src) {
+  const lb = document.getElementById("lightbox");
+  if (!lb) return;
+  lb.innerHTML = `<img src="${src}" alt="" />`;
+  lb.classList.add("is-open");
+  lb.setAttribute("aria-hidden", "false");
+  state.lightboxOpen = true;
+}
+
+function closeLightbox() {
+  const lb = document.getElementById("lightbox");
+  state.lightboxOpen = false;
+  if (!lb) return;
+  lb.classList.remove("is-open");
+  lb.setAttribute("aria-hidden", "true");
+  lb.innerHTML = "";
+}
+
 function shell(inner, extras = "") {
   const who = state.me
     ? `<div class="who"><span>${escapeHtml(state.me.name)}</span><span class="email">${escapeHtml(state.me.email || state.me.kind)}</span><button class="btn ghost small" id="logout">Sign out</button></div>`
@@ -101,7 +121,7 @@ function renderLogin() {
         <h2>A disposable room for sharing context.</h2>
         <p>Humans and model-agnostic bots drop into the same timeline — chat, images, files — then delete the room when the thread is done. No terminals, no repos, no cloud IDE.</p>
       </div>
-      <div class="card stack" style="max-width:28rem">
+      <div class="card stack login-card">
         <form id="login-form" class="stack">
           <label>Email<input type="email" name="email" required placeholder="you@studio.com" autocomplete="email" /></label>
           <label>Name<input type="text" name="name" placeholder="Ada" autocomplete="name" /></label>
@@ -157,7 +177,10 @@ function renderRooms() {
     )
     .join("");
   const bots = state.bots
-    .map((b) => `<li><strong>${escapeHtml(b.name)}</strong> <span class="badge bot">${escapeHtml(b.role)}</span> <span class="mono">${escapeHtml(b.id)}</span></li>`)
+    .map(
+      (b) =>
+        `<li class="identity"><strong>${escapeHtml(b.name)}</strong> <span class="badge bot">${escapeHtml(b.role)}</span> <span class="mono">${escapeHtml(b.id)}</span></li>`,
+    )
     .join("");
   shell(`
     <div class="wrap">
@@ -170,14 +193,14 @@ function renderRooms() {
       ${state.notice ? `<div class="notice ok">${escapeHtml(state.notice)}</div>` : ""}
       ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ""}
       ${state.lastToken ? `<div class="notice">Bot token (shown once): <code class="mono">${escapeHtml(state.lastToken)}</code></div>` : ""}
-      <div class="card stack" style="margin-bottom:1.2rem">
+      <div class="card stack create-card">
         <form id="new-room" class="row">
           <input type="text" name="name" required maxlength="80" placeholder="Room name — e.g. Launch notes" />
           <button class="btn" type="submit">Create room</button>
         </form>
       </div>
       <div class="room-list">${rooms || `<p class="empty">No rooms yet. Create one — they are cheap and disposable.</p>`}</div>
-      <div class="section-head" style="margin-top:2rem">
+      <div class="section-head section-block">
         <div>
           <h2>Bot identities</h2>
           <p class="muted">Mint an API token, then invite the bot into a room.</p>
@@ -189,7 +212,7 @@ function renderRooms() {
           <input type="text" name="role" maxlength="40" placeholder="Role — e.g. researcher" />
           <button class="btn secondary" type="submit">Create bot</button>
         </form>
-        <ul class="stack" style="padding-left:1.1rem">${bots || "<li class='muted'>None yet.</li>"}</ul>
+        <ul class="identity-list">${bots || `<li class="muted">None yet.</li>`}</ul>
       </div>
     </div>`);
   document.getElementById("new-room").addEventListener("submit", async (e) => {
@@ -307,33 +330,33 @@ function renderRoom() {
         </div>
       </section>
       <aside class="side-panel">
-        <h3>Members</h3>
-        ${members}
-        <h3 style="margin-top:1.4rem">Invite</h3>
-        <p class="muted">Anyone with this link can join.</p>
-        <input class="mono" id="invite" readonly value="${escapeHtml(invite)}" />
-        <button class="btn secondary small" id="copy-invite" style="margin-top:0.5rem">Copy invite</button>
-        <h3 style="margin-top:1.4rem">Add a bot</h3>
-        <form id="add-bot" class="stack">
-          <select name="bot_id">${botOpts || `<option value="">Create a bot from the rooms page first</option>`}</select>
-          <button class="btn small" type="submit" ${botOpts ? "" : "disabled"}>Invite bot</button>
-        </form>
+        <div class="side-section">
+          <h3>Members</h3>
+          ${members}
+        </div>
+        <div class="side-section">
+          <h3>Invite</h3>
+          <p class="muted">Anyone with this link can join.</p>
+          <input class="mono" id="invite" readonly value="${escapeHtml(invite)}" />
+          <button class="btn secondary small" id="copy-invite">Copy invite</button>
+        </div>
+        <div class="side-section">
+          <h3>Add a bot</h3>
+          <form id="add-bot" class="stack">
+            <select name="bot_id">${botOpts || `<option value="">Create a bot from the rooms page first</option>`}</select>
+            <button class="btn small" type="submit" ${botOpts ? "" : "disabled"}>Invite bot</button>
+          </form>
+        </div>
       </aside>
     </div>
-    <div id="lightbox" hidden class="lightbox"></div>`,
+    <div id="lightbox" class="lightbox" aria-hidden="true"></div>`,
   );
   const box = document.getElementById("messages");
   box.scrollTop = box.scrollHeight;
   box.querySelectorAll("img[data-full]").forEach((img) => {
-    img.addEventListener("click", () => {
-      const lb = document.getElementById("lightbox");
-      lb.hidden = false;
-      lb.innerHTML = `<img src="${img.getAttribute("data-full")}" alt="" />`;
-    });
+    img.addEventListener("click", () => openLightbox(img.getAttribute("data-full")));
   });
-  document.getElementById("lightbox").addEventListener("click", (e) => {
-    e.currentTarget.hidden = true;
-  });
+  document.getElementById("lightbox").addEventListener("click", closeLightbox);
   document.getElementById("copy-invite").addEventListener("click", async () => {
     await navigator.clipboard.writeText(invite);
     document.getElementById("copy-invite").textContent = "Copied";
@@ -536,4 +559,7 @@ async function boot() {
 }
 
 window.addEventListener("popstate", route);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
 boot();
