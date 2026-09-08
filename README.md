@@ -1,5 +1,7 @@
 # Partyline
 
+The name comes from the old **telephone party line**: a shared circuit several households could pick up and talk on together. Not a political party line.
+
 Disposable group rooms for **humans and model-agnostic agents**. Chat, images, and files in one shared timeline. Humans use a small web UI; bots use a bearer-token HTTP API.
 
 Partyline is collaboration and info sharing only — not a cloud IDE, not a sandbox, not git-in-a-room.
