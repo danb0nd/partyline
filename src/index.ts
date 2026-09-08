@@ -5,9 +5,16 @@ import { sha256Hex, signValue, verifySignedValue } from "./crypto";
 import { sendMagicLink } from "./email";
 import { hashPassword, validatePassword, verifyPassword } from "./password";
 import { id, inviteCode, newBotToken } from "./ids";
+import {
+  dispatchWebhooks,
+  listWebhookTargets,
+  newWebhookSecret,
+  notifyRoomBots,
+  validateWebhookUrl,
+} from "./webhook";
 import { ALLOWED_TYPES, MAX_BYTES, mediaKey, parseMediaKey, sniffType } from "./media";
 import { ensureSchema } from "./schema";
-import type { Actor, Attachment, Env, RoomRow } from "./types";
+import type { Actor, Attachment, Env, Message, RoomRow } from "./types";
 
 export { RoomDurableObject } from "./room";
 
@@ -24,7 +31,7 @@ const app = new Hono<App>();
 
 app.use("/api/*", cors({
   origin: "*",
-  allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization"],
 }));
 
@@ -202,11 +209,68 @@ app.post("/api/bots", async (c) => {
 app.get("/api/bots", async (c) => {
   const actor = await requireHuman(c);
   const rows = await c.env.DB.prepare(
-    "SELECT id, name, role, created_at FROM bots WHERE created_by = ? ORDER BY created_at DESC",
+    "SELECT id, name, role, created_at, webhook_url FROM bots WHERE created_by = ? ORDER BY created_at DESC",
   )
     .bind(actor.id)
-    .all<{ id: string; name: string; role: string; created_at: number }>();
-  return c.json({ bots: rows.results || [] });
+    .all<{ id: string; name: string; role: string; created_at: number; webhook_url: string | null }>();
+  return c.json({
+    bots: (rows.results || []).map((b) => ({
+      ...b,
+      webhook_url: b.webhook_url || "",
+      webhook_enabled: Boolean(b.webhook_url),
+    })),
+  });
+});
+
+app.patch("/api/bots/:id", async (c) => {
+  const actor = await requireActor(c);
+  const botId = c.req.param("id");
+  const bot = await c.env.DB.prepare(
+    "SELECT id, created_by, webhook_url, webhook_secret FROM bots WHERE id = ?",
+  )
+    .bind(botId)
+    .first<{ id: string; created_by: string; webhook_url: string | null; webhook_secret: string | null }>();
+  if (!bot) return c.json({ error: "not found" }, 404);
+  const owner = actor.kind === "human" && bot.created_by === actor.id;
+  const self = actor.kind === "bot" && actor.id === bot.id;
+  if (!owner && !self) return c.json({ error: "not found" }, 404);
+
+  const body = await readJson<{ webhook_url?: string; rotate_secret?: boolean }>(c);
+  let webhook_url = bot.webhook_url || "";
+  let webhook_secret = bot.webhook_secret;
+  let revealed: string | undefined;
+
+  if (body.webhook_url !== undefined) {
+    const checked = validateWebhookUrl(body.webhook_url);
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    webhook_url = checked.url || "";
+  }
+  if (!webhook_secret || body.rotate_secret) {
+    webhook_secret = newWebhookSecret();
+    revealed = webhook_secret;
+  }
+  if (!webhook_url) {
+    webhook_secret = null;
+    revealed = undefined;
+  }
+
+  await c.env.DB.prepare("UPDATE bots SET webhook_url = ?, webhook_secret = ? WHERE id = ?")
+    .bind(webhook_url || null, webhook_secret, botId)
+    .run();
+
+  return c.json({
+    bot: {
+      id: botId,
+      webhook_url,
+      webhook_enabled: Boolean(webhook_url),
+    },
+    ...(revealed
+      ? {
+          webhook_secret: revealed,
+          warning: "Store this webhook secret now. Partyline will not show it again.",
+        }
+      : {}),
+  });
 });
 
 app.delete("/api/bots/:id", async (c) => {
@@ -302,6 +366,7 @@ app.delete("/api/rooms/:id", async (c) => {
   if (!canDeleteRoom(actor, room, member)) {
     return c.json({ error: "only the creator or a human member can delete this room" }, 403);
   }
+  const webhookTargets = await listWebhookTargets(c.env, room.id);
   const destroy = await roomFetch(c.env, room.id, "/", {
     method: "DELETE",
     headers: actorHeaders(actor),
@@ -316,6 +381,14 @@ app.delete("/api/rooms/:id", async (c) => {
     .bind(room.id)
     .run();
   await c.env.DB.prepare("DELETE FROM rooms WHERE id = ?").bind(room.id).run();
+  schedule(
+    c,
+    dispatchWebhooks(webhookTargets, {
+      type: "room_deleted",
+      room_id: room.id,
+      room_name: room.name,
+    }),
+  );
   return c.json({
     deleted: true,
     room_id: room.id,
@@ -396,7 +469,7 @@ app.post("/api/rooms/:id/messages", async (c) => {
     headers: actorHeaders(actor),
     body: JSON.stringify(await readJson(c)),
   });
-  return passthrough(c, res);
+  return fanoutPostedMessage(c, roomId, actor.id, res);
 });
 
 app.post("/api/rooms/:id/typing", async (c) => {
@@ -453,7 +526,7 @@ app.post("/api/rooms/:id/upload", async (c) => {
     headers: actorHeaders(actor),
     body: JSON.stringify({ text: caption, attachments: [attachment] }),
   });
-  return passthrough(c, res);
+  return fanoutPostedMessage(c, roomId, actor.id, res);
 });
 
 app.get("/api/media", async (c) => {
@@ -538,6 +611,45 @@ function actorHeaders(actor: Actor): HeadersInit {
 function roomFetch(env: Env, roomId: string, path: string, init?: RequestInit): Promise<Response> {
   const stub = env.ROOMS.get(env.ROOMS.idFromName(roomId));
   return stub.fetch(new Request(`https://room${path}`, init));
+}
+
+function schedule(c: { executionCtx: { waitUntil: (p: Promise<unknown>) => void } }, work: Promise<unknown>): void {
+  try {
+    c.executionCtx.waitUntil(work.catch(() => undefined));
+  } catch {
+    void work.catch(() => undefined);
+  }
+}
+
+async function fanoutPostedMessage(
+  c: { env: Env; executionCtx: { waitUntil: (p: Promise<unknown>) => void } },
+  roomId: string,
+  actorId: string,
+  res: Response,
+): Promise<Response> {
+  if (!res.ok) return passthrough(c, res);
+  const payload = (await res.json()) as { message?: Message };
+  if (payload.message) {
+    const room = await loadRoom(c.env, roomId);
+    schedule(
+      c,
+      notifyRoomBots(
+        c.env,
+        roomId,
+        {
+          type: "message",
+          room_id: roomId,
+          room_name: room?.name || "",
+          message: payload.message,
+        },
+        actorId,
+      ),
+    );
+  }
+  return new Response(JSON.stringify(payload), {
+    status: res.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function passthrough(

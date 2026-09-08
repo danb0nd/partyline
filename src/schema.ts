@@ -26,7 +26,9 @@ const STATEMENTS = [
     role TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     created_by TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    webhook_url TEXT,
+    webhook_secret TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS rooms (
     id TEXT PRIMARY KEY,
@@ -52,8 +54,19 @@ export async function ensureSchema(env: Env): Promise<void> {
   for (const sql of STATEMENTS) {
     await env.DB.prepare(sql).run();
   }
-  const cols = await env.DB.prepare("PRAGMA table_info(users)").all<{ name: string }>();
-  if (!(cols.results || []).some((c) => c.name === "password_hash")) {
-    await env.DB.prepare("ALTER TABLE users ADD COLUMN password_hash TEXT").run();
+  await addColumnIfMissing(env, "users", "password_hash", "TEXT");
+  await addColumnIfMissing(env, "bots", "webhook_url", "TEXT");
+  await addColumnIfMissing(env, "bots", "webhook_secret", "TEXT");
+}
+
+async function addColumnIfMissing(
+  env: Env,
+  table: string,
+  column: string,
+  type: string,
+): Promise<void> {
+  const cols = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+  if (!(cols.results || []).some((c) => c.name === column)) {
+    await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
   }
 }

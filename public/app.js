@@ -15,6 +15,7 @@ const state = {
   ws: null,
   busy: false,
   lastToken: "",
+  lastWebhookSecret: "",
   draft: "",
   lightboxOpen: false,
   authMode: "login",
@@ -190,7 +191,18 @@ function renderRooms() {
   const bots = state.bots
     .map(
       (b) =>
-        `<li class="identity"><strong>${escapeHtml(b.name)}</strong> <span class="badge bot">${escapeHtml(b.role)}</span> <span class="mono">${escapeHtml(b.id)}</span></li>`,
+        `<li class="identity">
+          <div class="identity-head">
+            <strong>${escapeHtml(b.name)}</strong>
+            <span class="badge bot">${escapeHtml(b.role)}</span>
+            <span class="mono">${escapeHtml(b.id)}</span>
+            ${b.webhook_enabled ? `<span class="badge">webhook on</span>` : ""}
+          </div>
+          <form class="webhook-form row" data-hook="${b.id}">
+            <input type="url" name="webhook_url" value="${escapeHtml(b.webhook_url || "")}" placeholder="https://agent.example/partyline" />
+            <button class="btn secondary small" type="submit">Save webhook</button>
+          </form>
+        </li>`,
     )
     .join("");
   shell(`
@@ -204,6 +216,7 @@ function renderRooms() {
       ${state.notice ? `<div class="notice ok">${escapeHtml(state.notice)}</div>` : ""}
       ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ""}
       ${state.lastToken ? `<div class="notice">Bot token (shown once): <code class="mono">${escapeHtml(state.lastToken)}</code></div>` : ""}
+      ${state.lastWebhookSecret ? `<div class="notice">Webhook secret (shown once): <code class="mono">${escapeHtml(state.lastWebhookSecret)}</code></div>` : ""}
       <div class="card stack create-card">
         <form id="new-room" class="row">
           <input type="text" name="name" required maxlength="80" placeholder="Room name — e.g. Launch notes" />
@@ -214,7 +227,7 @@ function renderRooms() {
       <div class="section-head section-block">
         <div>
           <h2>Bot identities</h2>
-          <p class="muted">Mint an API token, then invite the bot into a room.</p>
+          <p class="muted">Mint an API token, invite the bot into a room, and optionally set a webhook so it is pushed new messages.</p>
         </div>
       </div>
       <div class="card stack">
@@ -253,6 +266,28 @@ function renderRooms() {
       state.error = err.message;
       renderRooms();
     }
+  });
+  app.querySelectorAll("[data-hook]").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = form.getAttribute("data-hook");
+      const webhook_url = new FormData(form).get("webhook_url");
+      try {
+        const data = await api(`/api/bots/${id}`, { method: "PATCH", body: { webhook_url } });
+        if (data.webhook_secret) {
+          state.lastWebhookSecret = data.webhook_secret;
+          state.notice = `Webhook saved for this bot. Copy the secret now.`;
+        } else {
+          state.lastWebhookSecret = "";
+          state.notice = data.bot.webhook_enabled ? "Webhook updated." : "Webhook cleared.";
+        }
+        state.bots = (await api("/api/bots")).bots;
+        renderRooms();
+      } catch (err) {
+        state.error = err.message;
+        renderRooms();
+      }
+    });
   });
   app.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {
