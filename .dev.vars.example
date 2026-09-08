@@ -3,12 +3,6 @@
 
 SESSION_SECRET=dev-only-change-me-not-for-prod
 
-# Instant login without email (local / first-run only). Never set true in production.
-DEV_AUTH=true
-
-# Optional. When unset, magic-link login returns { dev_link } in the JSON body.
-# RESEND_API_KEY=re_xxxxxxxx
-# FROM_EMAIL=Partyline <hello@bonjia.tech>
-
-# Public origin used in magic-link emails. Defaults to the incoming request origin.
-# APP_URL=https://partyline.bonjia.tech
+# Humans sign up / log in with email + password in the UI.
+# Optional instant login API (not shown in the UI). Never set true in production.
+# DEV_AUTH=true

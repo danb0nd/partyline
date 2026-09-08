@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { canDeleteRoom, canInvite } from "./access";
 import { sha256Hex, signValue, verifySignedValue } from "./crypto";
 import { sendMagicLink } from "./email";
+import { hashPassword, validatePassword, verifyPassword } from "./password";
 import { id, inviteCode, newBotToken } from "./ids";
 import { ALLOWED_TYPES, MAX_BYTES, mediaKey, parseMediaKey, sniffType } from "./media";
 import { ensureSchema } from "./schema";
@@ -39,17 +40,64 @@ app.get("/api/health", (c) =>
     ok: true,
     name: c.env.APP_NAME || "Partyline",
     time: Date.now(),
+    auth: "password",
     dev_auth: isDevAuth(c.env),
-    email_configured: Boolean(c.env.RESEND_API_KEY),
   }),
 );
 
 app.get("/api/auth/config", (c) =>
   c.json({
+    mode: "password",
     dev_auth: isDevAuth(c.env),
     email_configured: Boolean(c.env.RESEND_API_KEY),
   }),
 );
+
+app.post("/api/auth/signup", async (c) => {
+  const body = await readJson<{ email?: string; name?: string; password?: string }>(c);
+  const email = normalizeEmail(body.email);
+  const name = cleanName(body.name || (email ? email.split("@")[0] : ""));
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!email) return c.json({ error: "valid email required" }, 400);
+  if (!name) return c.json({ error: "name required" }, 400);
+  const pwErr = validatePassword(password);
+  if (pwErr) return c.json({ error: pwErr }, 400);
+  const existing = await c.env.DB.prepare("SELECT id FROM users WHERE email = ?")
+    .bind(email)
+    .first();
+  if (existing) return c.json({ error: "an account with that email already exists" }, 409);
+  const userId = id("usr");
+  const password_hash = await hashPassword(password);
+  await c.env.DB.prepare(
+    "INSERT INTO users (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+  )
+    .bind(userId, email, name, password_hash, Date.now())
+    .run();
+  c.header("Set-Cookie", await createSession(c.env, userId, isSecure(c.req.url)));
+  return c.json(
+    { user: { id: userId, email, name, kind: "human", role: "member" } },
+    201,
+  );
+});
+
+app.post("/api/auth/login", async (c) => {
+  const body = await readJson<{ email?: string; password?: string }>(c);
+  const email = normalizeEmail(body.email);
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!email || !password) return c.json({ error: "email and password required" }, 400);
+  const row = await c.env.DB.prepare(
+    "SELECT id, email, name, password_hash FROM users WHERE email = ?",
+  )
+    .bind(email)
+    .first<{ id: string; email: string; name: string; password_hash: string | null }>();
+  if (!row?.password_hash || !(await verifyPassword(password, row.password_hash))) {
+    return c.json({ error: "invalid email or password" }, 401);
+  }
+  c.header("Set-Cookie", await createSession(c.env, row.id, isSecure(c.req.url)));
+  return c.json({
+    user: { id: row.id, email: row.email, name: row.name, kind: "human", role: "member" },
+  });
+});
 
 app.post("/api/auth/magic-link", async (c) => {
   const body = await readJson<{ email?: string; name?: string }>(c);
