@@ -15,7 +15,6 @@ const state = {
   ws: null,
   busy: false,
   lastToken: "",
-  lastWebhookSecret: "",
   draft: "",
   lightboxOpen: false,
   authMode: "login",
@@ -122,7 +121,7 @@ function renderLogin() {
     <div class="wrap">
       <div class="hero">
         <h2>A disposable scratchpad, not a bot switchboard.</h2>
-        <p>Drop notes, images, and files into a shared room. When you ask an agent to look, it reads the timeline over the API and works elsewhere. ChatGPT, Claude, and Grok do not need a webhook — just a token. No terminals, no repos, no cloud IDE.</p>
+        <p>Drop notes, images, and files into a shared room. When you ask an agent to look, it reads the timeline over the API and works elsewhere. ChatGPT, Claude, and Grok only need a token. No terminals, no repos, no cloud IDE.</p>
       </div>
       <div class="card stack login-card">
         <div class="auth-tabs" role="tablist">
@@ -191,18 +190,7 @@ function renderRooms() {
   const bots = state.bots
     .map(
       (b) =>
-        `<li class="identity">
-          <div class="identity-head">
-            <strong>${escapeHtml(b.name)}</strong>
-            <span class="badge bot">${escapeHtml(b.role)}</span>
-            <span class="mono">${escapeHtml(b.id)}</span>
-            ${b.webhook_enabled ? `<span class="badge">webhook on</span>` : ""}
-          </div>
-          <form class="webhook-form row" data-hook="${b.id}">
-            <input type="url" name="webhook_url" value="${escapeHtml(b.webhook_url || "")}" placeholder="Optional webhook — only if this bot has a public HTTPS URL" />
-            <button class="btn secondary small" type="submit">Save webhook</button>
-          </form>
-        </li>`,
+        `<li class="identity"><div class="identity-head"><strong>${escapeHtml(b.name)}</strong> <span class="badge bot">${escapeHtml(b.role)}</span> <span class="mono">${escapeHtml(b.id)}</span></div></li>`,
     )
     .join("");
   shell(`
@@ -216,7 +204,6 @@ function renderRooms() {
       ${state.notice ? `<div class="notice ok">${escapeHtml(state.notice)}</div>` : ""}
       ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ""}
       ${state.lastToken ? `<div class="notice">Bot token (shown once): <code class="mono">${escapeHtml(state.lastToken)}</code></div>` : ""}
-      ${state.lastWebhookSecret ? `<div class="notice">Webhook secret (shown once): <code class="mono">${escapeHtml(state.lastWebhookSecret)}</code></div>` : ""}
       <div class="card stack create-card">
         <form id="new-room" class="row">
           <input type="text" name="name" required maxlength="80" placeholder="Room name — e.g. Launch notes" />
@@ -227,7 +214,7 @@ function renderRooms() {
       <div class="section-head section-block">
         <div>
           <h2>Bot identities</h2>
-          <p class="muted">Mint a token so an agent can read and write the room when you ask it to. A webhook is optional and only useful if that bot already has a public HTTPS URL.</p>
+          <p class="muted">Mint a token so an agent can read and write the room when you ask it to.</p>
         </div>
       </div>
       <div class="card stack">
@@ -266,28 +253,6 @@ function renderRooms() {
       state.error = err.message;
       renderRooms();
     }
-  });
-  app.querySelectorAll("[data-hook]").forEach((form) => {
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const id = form.getAttribute("data-hook");
-      const webhook_url = new FormData(form).get("webhook_url");
-      try {
-        const data = await api(`/api/bots/${id}`, { method: "PATCH", body: { webhook_url } });
-        if (data.webhook_secret) {
-          state.lastWebhookSecret = data.webhook_secret;
-          state.notice = `Webhook saved for this bot. Copy the secret now.`;
-        } else {
-          state.lastWebhookSecret = "";
-          state.notice = data.bot.webhook_enabled ? "Webhook updated." : "Webhook cleared.";
-        }
-        state.bots = (await api("/api/bots")).bots;
-        renderRooms();
-      } catch (err) {
-        state.error = err.message;
-        renderRooms();
-      }
-    });
   });
   app.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {

@@ -203,8 +203,6 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
 }
 .identity:first-child { border-top: 0; padding-top: 0; }
 .identity-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.7rem; }
-.webhook-form { width: 100%; margin-top: 0.15rem; }
-.webhook-form input { flex: 1 1 16rem; }
 
 .login-card { max-width: 28rem; }
 .auth-tabs {

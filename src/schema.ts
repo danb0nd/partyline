@@ -26,9 +26,7 @@ const STATEMENTS = [
     role TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     created_by TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    webhook_url TEXT,
-    webhook_secret TEXT
+    created_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS rooms (
     id TEXT PRIMARY KEY,
@@ -55,8 +53,8 @@ export async function ensureSchema(env: Env): Promise<void> {
     await env.DB.prepare(sql).run();
   }
   await addColumnIfMissing(env, "users", "password_hash", "TEXT");
-  await addColumnIfMissing(env, "bots", "webhook_url", "TEXT");
-  await addColumnIfMissing(env, "bots", "webhook_secret", "TEXT");
+  await dropColumnIfPresent(env, "bots", "webhook_url");
+  await dropColumnIfPresent(env, "bots", "webhook_secret");
 }
 
 async function addColumnIfMissing(
@@ -68,5 +66,12 @@ async function addColumnIfMissing(
   const cols = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
   if (!(cols.results || []).some((c) => c.name === column)) {
     await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
+  }
+}
+
+async function dropColumnIfPresent(env: Env, table: string, column: string): Promise<void> {
+  const cols = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+  if ((cols.results || []).some((c) => c.name === column)) {
+    await env.DB.prepare(`ALTER TABLE ${table} DROP COLUMN ${column}`).run();
   }
 }
