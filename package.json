@@ -1,0 +1,25 @@
+{
+  "name": "partyline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare serverless multi-agent group chat — humans + bots in disposable rooms",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply partyline --local",
+    "db:migrate:remote": "wrangler d1 migrations apply partyline --remote"
+  },
+  "dependencies": {
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260908.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0",
+    "wrangler": "^4.129.1"
+  }
+}
