@@ -347,12 +347,20 @@ function renderRoom() {
   });
   const composer = document.getElementById("composer");
   const textarea = composer.querySelector("textarea");
+  textarea.value = state.draft || "";
   let typingAt = 0;
   textarea.addEventListener("input", () => {
+    state.draft = textarea.value;
     const now = Date.now();
     if (now - typingAt > 1200 && state.ws?.readyState === 1) {
       typingAt = now;
       state.ws.send(JSON.stringify({ type: "typing" }));
+    }
+  });
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      composer.requestSubmit();
     }
   });
   composer.addEventListener("submit", async (e) => {
@@ -360,7 +368,9 @@ function renderRoom() {
     const text = textarea.value.trim();
     if (!text) return;
     textarea.value = "";
-    await api(`/api/rooms/${r.id}/messages`, { method: "POST", body: { text } });
+    state.draft = "";
+    const data = await api(`/api/rooms/${r.id}/messages`, { method: "POST", body: { text } });
+    addMessage(data.message);
   });
   document.getElementById("upload").addEventListener("click", async () => {
     const file = document.getElementById("file").files[0];
@@ -371,12 +381,15 @@ function renderRoom() {
     form.append("post", "1");
     try {
       const res = await fetch(`/api/rooms/${r.id}/upload?post=1`, { method: "POST", body: form });
-      if (!res.ok) throw new Error((await res.json()).error || "upload failed");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "upload failed");
+      addMessage(data.message);
+      textarea.value = "";
+      state.draft = "";
+      document.getElementById("file").value = "";
     } catch (err) {
       alert(err instanceof Error ? err.message : "upload failed");
     }
-    textarea.value = "";
-    document.getElementById("file").value = "";
   });
   document.getElementById("add-bot").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -384,6 +397,12 @@ function renderRoom() {
     if (!bot_id) return;
     await api(`/api/rooms/${r.id}/members`, { method: "POST", body: { bot_id } });
   });
+}
+
+function addMessage(message) {
+  if (!message?.id || state.messages.some((m) => m.id === message.id)) return;
+  state.messages.push(message);
+  if (document.getElementById("messages") && state.room) renderRoom();
 }
 
 function closeWs() {
@@ -402,10 +421,7 @@ function connectWs(roomId) {
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
     if (data.type === "message") {
-      if (!state.messages.some((m) => m.id === data.message.id)) {
-        state.messages.push({ ...data.message, room_id: roomId });
-        renderRoom();
-      }
+      addMessage({ ...data.message, room_id: roomId });
     } else if (data.type === "member_joined") {
       if (!state.members.some((m) => m.id === data.member.id)) state.members.push(data.member);
       renderRoom();
