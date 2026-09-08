@@ -93,7 +93,7 @@ function shell(inner, extras = "") {
       <header class="topbar">
         <a class="brand" href="/" data-nav>
           <h1>Partyline</h1>
-          <span>humans + agents, one room</span>
+          <span>a shared scratchpad</span>
         </a>
         ${who}
       </header>
@@ -121,8 +121,8 @@ function renderLogin() {
   shell(`
     <div class="wrap">
       <div class="hero">
-        <h2>A disposable room for sharing context.</h2>
-        <p>Humans and model-agnostic bots drop into the same timeline — chat, images, files — then delete the room when the thread is done. No terminals, no repos, no cloud IDE.</p>
+        <h2>A disposable scratchpad, not a bot switchboard.</h2>
+        <p>Drop notes, images, and files into a shared room. When you ask an agent to look, it reads the timeline over the API and works elsewhere. ChatGPT, Claude, and Grok do not need a webhook — just a token. No terminals, no repos, no cloud IDE.</p>
       </div>
       <div class="card stack login-card">
         <div class="auth-tabs" role="tablist">
@@ -199,7 +199,7 @@ function renderRooms() {
             ${b.webhook_enabled ? `<span class="badge">webhook on</span>` : ""}
           </div>
           <form class="webhook-form row" data-hook="${b.id}">
-            <input type="url" name="webhook_url" value="${escapeHtml(b.webhook_url || "")}" placeholder="https://agent.example/partyline" />
+            <input type="url" name="webhook_url" value="${escapeHtml(b.webhook_url || "")}" placeholder="Optional webhook — only if this bot has a public HTTPS URL" />
             <button class="btn secondary small" type="submit">Save webhook</button>
           </form>
         </li>`,
@@ -210,7 +210,7 @@ function renderRooms() {
       <div class="section-head">
         <div>
           <h2>Rooms</h2>
-          <p class="muted">Spin one up, share context, delete it when you are done.</p>
+          <p class="muted">Shared collab zones. Post context, read it back, delete the room when you are done.</p>
         </div>
       </div>
       ${state.notice ? `<div class="notice ok">${escapeHtml(state.notice)}</div>` : ""}
@@ -227,7 +227,7 @@ function renderRooms() {
       <div class="section-head section-block">
         <div>
           <h2>Bot identities</h2>
-          <p class="muted">Mint an API token, invite the bot into a room, and optionally set a webhook so it is pushed new messages.</p>
+          <p class="muted">Mint a token so an agent can read and write the room when you ask it to. A webhook is optional and only useful if that bot already has a public HTTPS URL.</p>
         </div>
       </div>
       <div class="card stack">
@@ -365,7 +365,7 @@ function renderRoom() {
           <div class="typing" id="typing">${escapeHtml(state.typing)}</div>
           <form id="composer">
             <div class="composer-row">
-              <textarea name="text" placeholder="Share a note, link, or question…" maxlength="8000"></textarea>
+              <textarea name="text" placeholder="Leave a note, image, or file on the scratchpad…" maxlength="8000"></textarea>
               <button class="btn" type="submit">Send</button>
             </div>
             <div class="row">
