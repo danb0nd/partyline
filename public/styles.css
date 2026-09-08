@@ -1,17 +1,27 @@
+/*
+ * Monochrome by design.
+ *
+ * With hue gone, every distinction has to be carried by tone, fill, weight or
+ * border. So: cards sit a step lighter than the page, an error inverts to a
+ * solid fill rather than turning red, a bot badge is filled where a human's is
+ * outlined, and links are underlined — without colour, an underline is the
+ * only thing left that says "this is a link".
+ *
+ * Nine neutrals do the whole job, and because they are only tones, the dark
+ * theme is the same ramp read from the other end.
+ */
 :root {
-  --paper: #f3eee4;
-  --paper-2: #e9e2d4;
-  --ink: #1c1915;
-  --ink-soft: #4a4338;
-  --line: #d4cbb8;
-  --terracotta: #c45c26;
-  --terracotta-dark: #9a4318;
-  --moss: #3d6b5a;
-  --moss-soft: #d7e4dc;
-  --danger: #9b2c2c;
-  --danger-soft: #f3d6d6;
-  --white: #fffdf8;
-  --shadow: 0 16px 40px rgba(28, 25, 21, 0.07);
+  color-scheme: light;
+  --paper: #fafafa;
+  --paper-2: #eeeeee;
+  --ink: #0d0d0d;
+  --ink-soft: #5a5a5a;
+  --line: #dedede;
+  --line-strong: #8f8f8f;
+  --white: #ffffff;
+  --invert-bg: #0d0d0d;
+  --invert-ink: #ffffff;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.06);
   --sans: "IBM Plex Sans", system-ui, sans-serif;
   --serif: "Newsreader", Georgia, serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -19,22 +29,43 @@
   --card-pad: 1.35rem 1.5rem;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #0d0d0d;
+    --paper-2: #232323;
+    --ink: #f4f4f4;
+    --ink-soft: #a1a1a1;
+    --line: #2e2e2e;
+    --line-strong: #666666;
+    --white: #171717;
+    --invert-bg: #f4f4f4;
+    --invert-ink: #0d0d0d;
+    --shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  }
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
   font-family: var(--sans);
-  background:
-    radial-gradient(1100px 480px at 8% -8%, #f8e8d6 0%, transparent 58%),
-    var(--paper);
+  background: var(--paper);
   color: var(--ink);
   line-height: 1.5;
 }
 
-a { color: var(--terracotta-dark); }
+/* Underlined, because colour is no longer available to mark a link. */
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration-thickness: 2px; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 :focus-visible {
-  outline: 2px solid var(--terracotta);
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
 
@@ -47,7 +78,7 @@ button { cursor: pointer; }
   gap: 1.25rem;
   padding: 1rem var(--page-pad);
   border-bottom: 1px solid var(--line);
-  background: rgba(243, 238, 228, 0.9);
+  background: color-mix(in srgb, var(--paper) 90%, transparent);
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
@@ -114,12 +145,14 @@ label {
   font-size: 0.84rem;
   color: var(--ink-soft);
 }
+/* Fields use the stronger rule: with no colour, a 1.3:1 hairline is not a
+   visible boundary, and WCAG wants 3:1 on a control's edge. */
 input[type="text"],
 input[type="email"],
 textarea,
 select {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--paper);
   border-radius: 12px;
   padding: 0.8rem 0.95rem;
@@ -128,31 +161,64 @@ select {
 textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
 
 .btn {
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 0.7rem 1.15rem;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--invert-bg);
+  color: var(--invert-ink);
   font-weight: 550;
   white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.btn:hover { background: #2a241c; }
-.btn.secondary { background: var(--paper-2); color: var(--ink); }
-.btn.ghost { background: transparent; color: var(--ink-soft); padding-inline: 0.7rem; }
-.btn.danger { background: var(--danger); color: white; }
+.btn:hover { background: color-mix(in srgb, var(--invert-bg) 82%, var(--paper)); }
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.btn.secondary:hover { background: var(--paper-2); }
+.btn.ghost {
+  background: transparent;
+  color: var(--ink-soft);
+  padding-inline: 0.7rem;
+  border-color: transparent;
+}
+.btn.ghost:hover { color: var(--ink); background: var(--paper-2); }
+/* Destructive reads as an outline that fills in on hover — a deliberate,
+   visible commitment rather than a red button you drift into. */
+.btn.danger {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--ink);
+  border-width: 2px;
+  font-weight: 600;
+}
+.btn.danger:hover { background: var(--invert-bg); color: var(--invert-ink); }
 .btn.small { padding: 0.45rem 0.9rem; font-size: 0.88rem; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .notice {
   padding: 0.85rem 1rem;
   border-radius: 12px;
-  background: #efe4c8;
+  background: var(--paper-2);
   color: var(--ink-soft);
   font-size: 0.94rem;
   margin: 0 0 1.15rem;
+  border-left: 3px solid var(--line-strong);
 }
-.notice.error { background: var(--danger-soft); color: var(--danger); }
-.notice.ok { background: var(--moss-soft); color: #20483a; }
+/* Inverted, so a failure is unmissable without reaching for red. */
+.notice.error {
+  background: var(--invert-bg);
+  color: var(--invert-ink);
+  border-left-color: var(--invert-bg);
+  font-weight: 500;
+}
+.notice.ok {
+  background: var(--white);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink);
+}
 
 .section-head {
   display: flex;
@@ -182,7 +248,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
 .room-card h3 { margin: 0 0 0.3rem; font-size: 1.15rem; font-weight: 600; }
 .room-card p { margin: 0; color: var(--ink-soft); font-size: 0.88rem; }
 .room-card a.title { color: inherit; text-decoration: none; }
-.room-card a.title:hover h3 { color: var(--terracotta-dark); }
+.room-card a.title:hover h3 { text-decoration: underline; text-underline-offset: 0.16em; }
 .empty { color: var(--ink-soft); padding: 1.25rem 0.2rem; }
 
 .identity-list {
@@ -221,7 +287,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
   padding: 0.5rem 0.8rem;
   font-weight: 550;
 }
-.auth-tab.is-on { background: var(--white); color: var(--ink); box-shadow: 0 1px 0 var(--line); }
+.auth-tab.is-on { background: var(--white); color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--ink); }
 
 .room-layout {
   display: grid;
@@ -276,9 +342,20 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
   padding: 0.16rem 0.5rem;
   background: var(--paper-2);
   color: var(--ink-soft);
+  border: 1px solid transparent;
 }
-.badge.bot { background: var(--moss-soft); color: #20483a; }
-.badge.human { background: #f0d9c6; color: var(--terracotta-dark); }
+/* Filled for bots, outlined for humans. Knowing which is which is the whole
+   point of a room where both post, so it must survive with no colour at all. */
+.badge.bot {
+  background: var(--invert-bg);
+  color: var(--invert-ink);
+  font-weight: 600;
+}
+.badge.human {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
 
 .attachments { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 0.2rem; }
 .attachments img {
@@ -335,8 +412,9 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
 }
 .member:last-child { border-bottom: 0; }
 .member strong { margin-left: 0.15rem; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
-.dot.on { background: var(--moss); }
+/* Filled = online, hollow ring = offline. */
+.dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; border: 1.5px solid var(--line-strong); display: inline-block; }
+.dot.on { background: var(--ink); border-color: var(--ink); }
 .side-panel .btn { margin-top: 0.75rem; }
 
 /* Closed by default. display:flex on .lightbox used to override [hidden] and block the room. */
@@ -345,7 +423,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
   pointer-events: none;
   position: fixed;
   inset: 0;
-  background: rgba(28, 25, 21, 0.78);
+  background: rgba(0, 0, 0, 0.82);
   align-items: center;
   justify-content: center;
   padding: 2rem;

@@ -39,6 +39,10 @@ export interface Message {
   text: string;
   attachments: Attachment[];
   created_at: number;
+  /** Handles found in `text`, lowercased. Derived, never client-supplied. */
+  mentions: string[];
+  /** Whether `mentions` names the actor this copy was rendered for. */
+  mentions_you?: boolean;
 }
 
 export interface RoomRow {

@@ -5,8 +5,18 @@ import { sha256Hex, signValue, verifySignedValue } from "./crypto";
 import { sendMagicLink } from "./email";
 import { hashPassword, validatePassword, verifyPassword } from "./password";
 import { id, inviteCode, newBotToken } from "./ids";
+import { AGENT_GUIDE, CONTENT_WARNING } from "./guide";
 import { ALLOWED_TYPES, MAX_BYTES, mediaKey, parseMediaKey, sniffType } from "./media";
-import { ensureSchema } from "./schema";
+import {
+  clientKey,
+  consume,
+  LOGIN_LIMIT,
+  MAGIC_LINK_LIMIT,
+  POST_LIMIT,
+  SIGNUP_LIMIT,
+  type RateLimit,
+} from "./ratelimit";
+import { ensureSchema, sweepExpired } from "./schema";
 import type { Actor, Attachment, Env, RoomRow } from "./types";
 
 export { RoomDurableObject } from "./room";
@@ -35,6 +45,44 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+/**
+ * 429 unless the caller has budget left. Sets Retry-After so a well-behaved
+ * agent backs off by the right amount instead of hammering.
+ */
+async function limit(
+  c: { env: Env; req: { header: (n: string) => string | undefined } },
+  scope: string,
+  rule: RateLimit,
+  subject?: string,
+): Promise<Response | null> {
+  const key = `${scope}:${subject || clientKey(c.req)}`;
+  const verdict = await consume(c.env, key, rule);
+  if (verdict.ok) return null;
+  return new Response(
+    JSON.stringify({
+      error: "too many requests",
+      scope,
+      retry_after: verdict.retryAfter,
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(verdict.retryAfter),
+      },
+    },
+  );
+}
+
+/**
+ * The trust contract, served where a machine will look for it. Public on
+ * purpose: an agent should be able to read the rules before it has a token.
+ */
+app.get("/api/agent-guide", (c) => {
+  c.header("Cache-Control", "public, max-age=300");
+  return c.json(AGENT_GUIDE);
+});
+
 app.get("/api/health", (c) =>
   c.json({
     ok: true,
@@ -54,6 +102,8 @@ app.get("/api/auth/config", (c) =>
 );
 
 app.post("/api/auth/signup", async (c) => {
+  const capped = await limit(c, "signup", SIGNUP_LIMIT);
+  if (capped) return capped;
   const body = await readJson<{ email?: string; name?: string; password?: string }>(c);
   const email = normalizeEmail(body.email);
   const name = cleanName(body.name || (email ? email.split("@")[0] : ""));
@@ -85,11 +135,30 @@ app.post("/api/auth/login", async (c) => {
   const email = normalizeEmail(body.email);
   const password = typeof body.password === "string" ? body.password : "";
   if (!email || !password) return c.json({ error: "email and password required" }, 400);
+  // Bucket by IP and by target address: the first stops one host spraying many
+  // accounts, the second stops a botnet grinding one account.
+  const byIp = await limit(c, "login-ip", LOGIN_LIMIT);
+  if (byIp) return byIp;
+  const byEmail = await limit(c, "login-email", LOGIN_LIMIT, email);
+  if (byEmail) return byEmail;
   const row = await c.env.DB.prepare(
     "SELECT id, email, name, password_hash FROM users WHERE email = ?",
   )
     .bind(email)
     .first<{ id: string; email: string; name: string; password_hash: string | null }>();
+  // An account created by magic link has no password_hash, and answering
+  // "invalid email or password" left it permanently unable to sign in — the
+  // password path rejects it and signup 409s. Say what to do instead. This
+  // does confirm the address exists, but open signup already reveals that.
+  if (row && !row.password_hash) {
+    return c.json(
+      {
+        error: "this account has no password yet — sign in with an email link, then set one",
+        next: "POST /api/auth/magic-link",
+      },
+      409,
+    );
+  }
   if (!row?.password_hash || !(await verifyPassword(password, row.password_hash))) {
     return c.json({ error: "invalid email or password" }, 401);
   }
@@ -99,11 +168,41 @@ app.post("/api/auth/login", async (c) => {
   });
 });
 
+/**
+ * Set or change this account's password. Requires a live session, which is
+ * what makes it safe: a magic-link account is claimed by proving control of
+ * the inbox first, never by someone else "signing up" with the address.
+ */
+app.post("/api/auth/password", async (c) => {
+  const actor = await requireHuman(c);
+  const body = await readJson<{ password?: string; current_password?: string }>(c);
+  const password = typeof body.password === "string" ? body.password : "";
+  const pwErr = validatePassword(password);
+  if (pwErr) return c.json({ error: pwErr }, 400);
+  const row = await c.env.DB.prepare("SELECT password_hash FROM users WHERE id = ?")
+    .bind(actor.id)
+    .first<{ password_hash: string | null }>();
+  if (row?.password_hash) {
+    const current = typeof body.current_password === "string" ? body.current_password : "";
+    if (!current || !(await verifyPassword(current, row.password_hash))) {
+      return c.json({ error: "current_password is incorrect" }, 403);
+    }
+  }
+  await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+    .bind(await hashPassword(password), actor.id)
+    .run();
+  return c.json({ ok: true, was_set: Boolean(row?.password_hash) });
+});
+
 app.post("/api/auth/magic-link", async (c) => {
   const body = await readJson<{ email?: string; name?: string }>(c);
   const email = normalizeEmail(body.email);
   const name = cleanName(body.name || email.split("@")[0]);
   if (!email) return c.json({ error: "valid email required" }, 400);
+  const byIp = await limit(c, "magic-ip", MAGIC_LINK_LIMIT);
+  if (byIp) return byIp;
+  const byEmail = await limit(c, "magic-email", MAGIC_LINK_LIMIT, email);
+  if (byEmail) return byEmail;
   const token = id("lnk", 16);
   const token_hash = await sha256Hex(token);
   await c.env.DB.prepare(
@@ -384,13 +483,23 @@ app.get("/api/rooms/:id/messages", async (c) => {
   if (!(await isMember(c.env, roomId, actor.id))) return c.json({ error: "not a member" }, 403);
   const qs = new URL(c.req.url).search;
   const res = await roomFetch(c.env, roomId, `/messages${qs}`, { headers: actorHeaders(actor) });
-  return passthrough(c, res);
+  // Say it in the headers as well as the body: an agent that reads a room is
+  // handling text other people wrote, and the reminder should be impossible
+  // to miss whichever layer it is looking at.
+  return passthrough(c, res, {
+    "X-Partyline-Content": CONTENT_WARNING,
+    "X-Partyline-Agent-Guide": "/api/agent-guide",
+  });
 });
 
 app.post("/api/rooms/:id/messages", async (c) => {
   const actor = await requireActor(c);
   const roomId = c.req.param("id");
   if (!(await isMember(c.env, roomId, actor.id))) return c.json({ error: "not a member" }, 403);
+  // Keyed on the actor, not the IP: a looping agent is the realistic failure
+  // here, and several agents can share one egress address.
+  const capped = await limit(c, "post", POST_LIMIT, actor.id);
+  if (capped) return capped;
   const res = await roomFetch(c.env, roomId, "/messages", {
     method: "POST",
     headers: actorHeaders(actor),
@@ -487,10 +596,18 @@ app.get("/api/rooms/:id/ws", async (c) => {
   return stub.fetch(new Request(c.req.raw, { headers }));
 });
 
+/**
+ * Roughly one request in 200 also clears out expired sessions, magic links and
+ * rate-limit windows. Sampling keeps it off the hot path without needing a
+ * cron trigger, and waitUntil means the caller never waits for it.
+ */
+const SWEEP_ODDS = 0.005;
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
+      if (Math.random() < SWEEP_ODDS) ctx.waitUntil(sweepExpired(env));
       return app.fetch(request, env, ctx);
     }
     if (!env.ASSETS) return new Response("assets binding missing", { status: 500 });
@@ -543,8 +660,11 @@ function roomFetch(env: Env, roomId: string, path: string, init?: RequestInit): 
 async function passthrough(
   _c: unknown,
   res: Response,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
-  return new Response(res.body, { status: res.status, headers: res.headers });
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(extraHeaders || {})) headers.set(k, v);
+  return new Response(res.body, { status: res.status, headers });
 }
 
 async function loadRoom(env: Env, roomId: string): Promise<RoomRow | null> {

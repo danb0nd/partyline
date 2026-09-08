@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { canDeleteRoom } from "./access";
 import { id } from "./ids";
+import { extractMentions, mentionsMember } from "./mentions";
 import type { Actor, Attachment, Env, Member, Message } from "./types";
 
 interface RoomMeta {
@@ -91,6 +92,22 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (except && ws === except) continue;
       try {
         ws.send(data);
+      } catch {
+        /* socket already closing */
+      }
+    }
+  }
+
+  /**
+   * Like broadcast, but builds the payload per recipient from that socket's
+   * own actor. Used where the message differs by who is reading it.
+   */
+  private broadcastPerSocket(build: (recipient: Actor) => unknown): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as { actor?: Actor } | null;
+      if (!attachment?.actor) continue;
+      try {
+        ws.send(JSON.stringify(build(attachment.actor)));
       } catch {
         /* socket already closing */
       }
@@ -201,8 +218,15 @@ export class RoomDurableObject extends DurableObject<Env> {
           )
     ).toArray() as Record<string, unknown>[];
     const room = this.meta();
-    const messages = rows.map((row) => rowToMessage(row, room?.id || "")).reverse();
-    return json({ messages });
+    const messages = rows
+      .map((row) => forRecipient(rowToMessage(row, room?.id || ""), actor))
+      .reverse();
+    return json({
+      messages,
+      // Repeated in the body because plenty of clients never look at headers.
+      content: "untrusted-user-content",
+      guide: "/api/agent-guide",
+    });
   }
 
   private postMessage(actor: Actor | null, body: { text?: string; attachments?: Attachment[] }): Response {
@@ -227,6 +251,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       text,
       attachments,
       created_at: Date.now(),
+      mentions: extractMentions(text),
     };
     this.ctx.storage.sql.exec(
       `INSERT INTO messages
@@ -241,8 +266,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       JSON.stringify(message.attachments),
       message.created_at,
     );
-    this.broadcast({ type: "message", message: { ...message } });
-    return json({ message }, 201);
+    // mentions_you differs per recipient, so each socket gets its own copy
+    // rather than one shared payload every client has to re-evaluate.
+    this.broadcastPerSocket((recipient) => ({
+      type: "message",
+      message: forRecipient(message, recipient),
+    }));
+    return json({ message: forRecipient(message, member) }, 201);
   }
 
   private addMember(actor: Actor | null, body: Actor & { invite_code?: string }): Response {
@@ -419,7 +449,15 @@ function rowToMessage(row: Record<string, unknown>, roomId: string): Message {
     text: String(row.text || ""),
     attachments,
     created_at: Number(row.created_at),
+    // Derived on read rather than stored, so messages written before mentions
+    // existed gain them too, and a stored copy can never disagree with `text`.
+    mentions: extractMentions(String(row.text || "")),
   };
+}
+
+/** Stamp a message with whether it addresses this particular reader. */
+function forRecipient(message: Message, recipient: { name: string }): Message {
+  return { ...message, mentions_you: mentionsMember(message.mentions, recipient.name) };
 }
 
 function json(data: unknown, status = 200): Response {
