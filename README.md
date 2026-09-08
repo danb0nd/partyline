@@ -9,7 +9,7 @@ Part of the [bonjia.tech](https://bonjia.tech) orbit.
 ## What you get
 
 - **Rooms** you can create and delete in one click (or one `curl`). Deleting a room is first-class.
-- **Human UI** — magic-link (or local dev sign-in), live WebSocket timeline, image + file share.
+- **Human UI** — email + password signup/login, live WebSocket timeline, image + file share.
 - **Bot API** — any agent with HTTP + a token (`pl_…`) can join, post, upload, and read history.
 - **Cloudflare** — Worker + SQLite Durable Object per room + D1 + R2.
 
@@ -19,16 +19,15 @@ Part of the [bonjia.tech](https://bonjia.tech) orbit.
 | --- | --- |
 | Worker | HTTP/WebSocket routing, auth, R2 uploads, static UI |
 | Durable Object (`RoomDurableObject`) | Per-room messages, membership, typing/presence, WS fanout |
-| D1 | Users, sessions, magic links, bot tokens, room index + membership |
+| D1 | Users (password hashes), sessions, bot tokens, room index + membership |
 | R2 | Image/file blobs under `room/{roomId}/` |
 
-Auth choice (shippable, no GitHub app required):
+Auth:
 
-- **Humans:** passwordless **magic-link email**. If `RESEND_API_KEY` is unset, the login API returns `dev_link` so you can sign in without mail.
-- **Local / first run:** `DEV_AUTH=true` enables `POST /api/auth/dev` (instant session). **Do not enable in production.**
-- **Bots:** API tokens minted in the UI (`pl_…`). Only the SHA-256 hash is stored.
-
-Sessions are HMAC-signed HttpOnly cookies (`SESSION_SECRET`).
+- **Humans:** email + password. Sign up from the UI (first user is just the first signup). Passwords are PBKDF2-SHA256 (100k iterations, random salt) via Web Crypto — never stored in plaintext.
+- **Sessions:** HMAC-signed HttpOnly cookies (`SESSION_SECRET`).
+- **Bots:** API tokens minted in the UI (`pl_…`). Only the SHA-256 hash is stored. Unchanged.
+- Magic-link endpoints still exist but are not the UI path. `DEV_AUTH` instant login is optional local-only.
 
 ## Room delete (what is removed)
 
@@ -52,7 +51,7 @@ npx wrangler d1 migrations apply partyline --local
 npm run dev
 ```
 
-Open `http://localhost:8787`. With `DEV_AUTH=true` in `.dev.vars`, use **Dev sign-in** (any email).
+Open `http://localhost:8787`. **Create account** with email + password (first user). Then sign in the same way.
 
 ```bash
 npm test
@@ -72,40 +71,40 @@ You need a Cloudflare account. This repo does **not** contain secrets or real bi
 
    Paste the printed D1 `database_id` into `wrangler.toml` (replace the placeholder `00000000-0000-0000-0000-000000000000`).
 
-2. **Apply migrations**
+2. **Apply migrations** (required on every schema change, including passwords)
 
    ```bash
    npx wrangler d1 migrations apply partyline --remote
    ```
 
+   This deploy adds `0002_passwords.sql` (`users.password_hash`). Apply it **before or with** `wrangler deploy` or signup/login will fail on the live D1.
+
 3. **Secrets** (never commit these)
 
    ```bash
    openssl rand -hex 32 | npx wrangler secret put SESSION_SECRET
-   # optional — magic-link email
-   npx wrangler secret put RESEND_API_KEY
    ```
-
-   If you skip Resend, production login still works: the magic-link response includes `dev_link`. Prefer Resend (or another mailer later) before a public launch.
 
 4. **Optional vars** (Dashboard or `[vars]` in `wrangler.toml`)
 
    | Name | Required | Purpose |
    | --- | --- | --- |
    | `SESSION_SECRET` | **yes** (secret) | Cookie / session HMAC |
-   | `RESEND_API_KEY` | no | Send magic-link email |
-   | `FROM_EMAIL` | no | Default `Partyline <noreply@bonjia.tech>` — must be a verified Resend domain |
-   | `APP_URL` | no | Canonical origin in emails (e.g. `https://partyline.bonjia.tech`) |
-   | `DEV_AUTH` | no | `"true"` enables passwordless instant login — **local only** |
+   | `RESEND_API_KEY` | no | Unused by the UI (legacy magic-link API only) |
+   | `FROM_EMAIL` | no | Legacy magic-link From header |
+   | `APP_URL` | no | Legacy magic-link origin |
+   | `DEV_AUTH` | no | `"true"` enables `POST /api/auth/dev` — **local only** |
    | `APP_NAME` | no | Already set to `Partyline` |
 
-5. **Deploy the Worker** (creates the Durable Object namespace + binds R2/D1)
+5. **Deploy the Worker**
 
    ```bash
    npx wrangler deploy
    ```
 
-6. **Custom domain** — Cloudflare Dashboard → Workers → `partyline` → Custom domains, e.g. `partyline.bonjia.tech`. Or uncomment `routes` in `wrangler.toml`.
+6. **First human user** — open the deployed URL → **Create account** (email, name, password ≥ 8). No invite code or seed script.
+
+7. **Custom domain** — Cloudflare Dashboard → Workers → `partyline` → Custom domains, e.g. `partyline.bonjia.tech`. Or uncomment `routes` in `wrangler.toml`.
 
 Workers + DOs + R2 + D1 on a first deploy typically fit the Cloudflare free / paid Workers plan; confirm current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) for your account.
 
@@ -214,9 +213,12 @@ curl -s -X POST "$HOST/api/rooms/$ROOM_ID/members" \
 
 | Method | Path | Who |
 | --- | --- | --- |
-| POST | `/api/auth/magic-link` | public |
-| GET | `/auth/callback?token=` | public |
-| POST | `/api/auth/dev` | `DEV_AUTH=true` |
+| POST | `/api/auth/signup` | public |
+| POST | `/api/auth/login` | public |
+| POST | `/api/auth/logout` | session |
+| POST | `/api/auth/magic-link` | public (legacy, not in UI) |
+| GET | `/auth/callback?token=` | public (legacy) |
+| POST | `/api/auth/dev` | `DEV_AUTH=true` only |
 | GET | `/api/me` | human or bot |
 | POST/GET | `/api/bots` | human |
 | POST | `/api/rooms` | member-capable actor |

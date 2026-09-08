@@ -17,6 +17,7 @@ const state = {
   lastToken: "",
   draft: "",
   lightboxOpen: false,
+  authMode: "login",
 };
 
 function pathParts() {
@@ -115,6 +116,7 @@ function shell(inner, extras = "") {
 }
 
 function renderLogin() {
+  const mode = state.authMode === "signup" ? "signup" : "login";
   shell(`
     <div class="wrap">
       <div class="hero">
@@ -122,40 +124,49 @@ function renderLogin() {
         <p>Humans and model-agnostic bots drop into the same timeline — chat, images, files — then delete the room when the thread is done. No terminals, no repos, no cloud IDE.</p>
       </div>
       <div class="card stack login-card">
-        <form id="login-form" class="stack">
+        <div class="auth-tabs" role="tablist">
+          <button type="button" class="auth-tab ${mode === "login" ? "is-on" : ""}" data-auth="login">Sign in</button>
+          <button type="button" class="auth-tab ${mode === "signup" ? "is-on" : ""}" data-auth="signup">Create account</button>
+        </div>
+        <form id="auth-form" class="stack">
           <label>Email<input type="email" name="email" required placeholder="you@studio.com" autocomplete="email" /></label>
-          <label>Name<input type="text" name="name" placeholder="Ada" autocomplete="name" /></label>
+          ${
+            mode === "signup"
+              ? `<label>Name<input type="text" name="name" required placeholder="Ada" autocomplete="name" /></label>`
+              : ""
+          }
+          <label>Password<input type="password" name="password" required minlength="8" maxlength="128" placeholder="${mode === "signup" ? "At least 8 characters" : "Your password"}" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" /></label>
           <div class="row">
-            <button class="btn" type="submit">Email me a link</button>
-            ${state.devAuth ? `<button class="btn secondary" type="button" id="dev-login">Dev sign-in</button>` : ""}
+            <button class="btn" type="submit">${mode === "signup" ? "Create account" : "Sign in"}</button>
           </div>
         </form>
+        <p class="muted">${mode === "signup" ? "First person here? Create an account — that is the admin." : "Use the email and password you signed up with."}</p>
         <div id="flash"></div>
       </div>
     </div>`);
   const flash = document.getElementById("flash");
-  document.getElementById("login-form").addEventListener("submit", async (e) => {
+  app.querySelectorAll("[data-auth]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.authMode = btn.getAttribute("data-auth");
+      renderLogin();
+    });
+  });
+  document.getElementById("auth-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     flash.innerHTML = "";
     try {
-      const data = await api("/api/auth/magic-link", {
-        method: "POST",
-        body: { email: fd.get("email"), name: fd.get("name") },
-      });
-      flash.innerHTML = `<div class="notice ok">${escapeHtml(data.message)}</div>` +
-        (data.dev_link
-          ? `<p class="muted">Dev link: <a href="${escapeHtml(data.dev_link)}">${escapeHtml(data.dev_link)}</a></p>`
-          : "");
-    } catch (err) {
-      flash.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`;
-    }
-  });
-  document.getElementById("dev-login")?.addEventListener("click", async () => {
-    const form = document.getElementById("login-form");
-    const fd = new FormData(form);
-    try {
-      await api("/api/auth/dev", { method: "POST", body: { email: fd.get("email"), name: fd.get("name") } });
+      if (mode === "signup") {
+        await api("/api/auth/signup", {
+          method: "POST",
+          body: { email: fd.get("email"), name: fd.get("name"), password: fd.get("password") },
+        });
+      } else {
+        await api("/api/auth/login", {
+          method: "POST",
+          body: { email: fd.get("email"), password: fd.get("password") },
+        });
+      }
       await boot();
     } catch (err) {
       flash.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`;

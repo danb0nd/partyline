@@ -204,6 +204,23 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.45; }
 .identity:first-child { border-top: 0; padding-top: 0; }
 
 .login-card { max-width: 28rem; }
+.auth-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  background: var(--paper);
+  border-radius: 999px;
+}
+.auth-tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+  font-weight: 550;
+}
+.auth-tab.is-on { background: var(--white); color: var(--ink); box-shadow: 0 1px 0 var(--line); }
 
 .room-layout {
   display: grid;

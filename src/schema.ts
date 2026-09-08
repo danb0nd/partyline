@@ -5,6 +5,7 @@ const STATEMENTS = [
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    password_hash TEXT,
     created_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS sessions (
@@ -50,5 +51,9 @@ const STATEMENTS = [
 export async function ensureSchema(env: Env): Promise<void> {
   for (const sql of STATEMENTS) {
     await env.DB.prepare(sql).run();
+  }
+  const cols = await env.DB.prepare("PRAGMA table_info(users)").all<{ name: string }>();
+  if (!(cols.results || []).some((c) => c.name === "password_hash")) {
+    await env.DB.prepare("ALTER TABLE users ADD COLUMN password_hash TEXT").run();
   }
 }
